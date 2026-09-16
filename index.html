@@ -158,7 +158,7 @@ break-inside: avoid !important;
         <div>
           <div class="flex items-center gap-2">
             <span class="font-extrabold tracking-widest text-[#D4AF37] text-base sm:text-lg uppercase drop-shadow-sm group-hover:text-amber-200 transition-colors">ADRENALIN FK UNWAHAS</span>
-            <span class="text-[10px] bg-red-950 text-red-200 px-2 py-0.5 rounded font-mono border border-red-800">UNI v3.0</span>
+            <span class="text-[10px] bg-red-950 text-emerald-300 px-2 py-0.5 rounded font-mono border border-emerald-800/80 flex items-center gap-1.5 shadow-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>FIREBASE SYNC</span>
           </div>
           <p class="text-[11px] text-red-200 tracking-wider">Portal Terpadu Sistem Kedisiplinan & Etika Akademika</p>
         </div>
@@ -461,13 +461,13 @@ break-inside: avoid !important;
     </div>
   </div>
 
-  <!-- MODAL: POP-UP BUKTI FOTO ELEGAN (ANTI TAB BLANK) -->
-  <div id="modal-evidence" class="fixed inset-0 z-[95] hidden items-center justify-center bg-black/80 backdrop-blur-xs p-4 transition-all duration-200">
+  <!-- MODAL: POP-UP BUKTI FOTO ELEGAN (ANTI TAB BLANK & CLOUD SYNCED) -->
+  <div id="modal-evidence" onclick="if(event.target === this) closeEvidenceModal()" class="fixed inset-0 z-[95] hidden items-center justify-center bg-black/80 backdrop-blur-xs p-4 transition-all duration-200">
     <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-gray-300 flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95">
       <div class="bg-[#6B1214] text-white px-4 py-3 flex justify-between items-center border-b-2 border-amber-400">
         <div class="flex items-center gap-2">
           <i data-lucide="image" class="w-5 h-5 text-amber-300"></i>
-          <h3 id="evidence-modal-title" class="font-black text-xs sm:text-sm truncate">Bukti Foto Pelanggaran</h3>
+          <h3 id="evidence-modal-title" class="font-black text-xs sm:text-sm truncate">Bukti Foto Pelanggaran (Firebase Cloud)</h3>
         </div>
         <button type="button" onclick="closeEvidenceModal()" class="text-red-200 hover:text-white font-bold p-1 rounded hover:bg-white/10 cursor-pointer">
           <i data-lucide="x" class="w-5 h-5"></i>
@@ -475,16 +475,22 @@ break-inside: avoid !important;
       </div>
       
       <div class="p-3 sm:p-4 bg-gray-950 flex items-center justify-center overflow-auto flex-1 min-h-[220px]">
-        <img id="evidence-modal-img" src="" alt="Bukti Foto" class="max-h-[60vh] w-auto max-w-full rounded-lg object-contain shadow-2xl border border-gray-800" />
+        <img id="evidence-modal-img" src="" alt="Bukti Foto Cloud" class="max-h-[60vh] w-auto max-w-full rounded-lg object-contain shadow-2xl border border-gray-800" />
       </div>
 
       <div class="p-3.5 bg-gray-50 border-t border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs">
         <div id="evidence-modal-info" class="text-gray-700 font-medium text-[11px] truncate w-full sm:w-auto"></div>
         <div class="flex items-center gap-2 shrink-0">
-          <a id="evidence-modal-download" href="#" download="Bukti_Pelanggaran.jpg" class="px-3 py-1.5 bg-gray-800 hover:bg-black text-white rounded-lg font-bold flex items-center gap-1.5 text-xs transition-colors cursor-pointer">
-            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          <button 
+            type="button" 
+            id="evidence-modal-download-btn"
+            onclick="handleDownloadCurrentEvidence()" 
+            class="px-3.5 py-1.5 bg-gray-900 hover:bg-black text-white rounded-lg font-bold flex items-center gap-1.5 text-xs transition-all cursor-pointer active:scale-95 shadow-xs"
+            title="Unduh file foto bukti ini ke perangkat"
+          >
+            <i data-lucide="download" class="w-3.5 h-3.5 text-amber-300"></i>
             <span>Unduh Foto</span>
-          </a>
+          </button>
           <button type="button" onclick="closeEvidenceModal()" class="px-4 py-1.5 bg-[#8B181B] hover:bg-[#6B1214] text-white rounded-lg font-bold text-xs cursor-pointer">
             Tutup
           </button>
@@ -1266,22 +1272,37 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       3. FIREBASE REALTIME LISTENERS & AUTH
+       3. FIREBASE REALTIME LISTENERS & AUTH (MURNI ANONYMOUS & CLOUD SYNC)
        ========================================================================= */
     async function initFirebase() {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
-      user = auth.currentUser;
-      if (user) {
-        setupRealtimeListeners();
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+        user = auth.currentUser;
+        if (user) {
+          setupRealtimeListeners();
+        }
+      } catch (err) {
+        console.warn("Auth token fallback to Anonymous Sign-In:", err);
+        try {
+          await signInAnonymously(auth);
+          user = auth.currentUser;
+          if (user) {
+            setupRealtimeListeners();
+          }
+        } catch (anonErr) {
+          console.error("Firebase Anonymous Auth gagal:", anonErr);
+        }
       }
     }
 
     function setupRealtimeListeners() {
-      // Listener 1: Mahasiswa Sentral
+      if (!user) return;
+
+      // Listener 1: Mahasiswa Sentral (Strict Path /artifacts/{appId}/public/data/students)
       onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'students'), (snap) => {
         const cloudStudents = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         const map = new Map();
@@ -1296,38 +1317,38 @@ break-inside: avoid !important;
         updateHeaderCounts();
         
         const modal = document.getElementById('modal-student');
-        if(modal && !modal.classList.contains('hidden')){
-           renderStudentTableModal();
+        if (modal && !modal.classList.contains('hidden')) {
+          renderStudentTableModal();
         }
         if (['rekap_adrenalin', 'pemantauan_1th', 'raport_terpadu'].includes(state.currentModule)) {
-           const main = document.getElementById('main-content');
-           if (main) renderCurrentModule();
+          const main = document.getElementById('main-content');
+          if (main) renderCurrentModule();
         }
       }, (error) => console.error("Firebase Sync Error (Students):", error));
 
-      // Listener 2: Rekap Adrenalin
+      // Listener 2: Rekap Adrenalin (Strict Path /artifacts/{appId}/public/data/records)
       onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'records'), (snap) => {
         state.recordsAdrenalin = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.timestamp - a.timestamp);
         if (['rekap_adrenalin', 'raport_terpadu'].includes(state.currentModule)) renderCurrentModule();
-      }, (error) => console.error(error));
+      }, (error) => console.error("Firebase Sync Error (Adrenalin Records):", error));
 
-      // Listener 3: Aturan Custom Adrenalin
+      // Listener 3: Aturan Custom Adrenalin (Strict Path /artifacts/{appId}/public/data/custom_rules)
       onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'custom_rules'), (snap) => {
         state.customRulesAdrenalin = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
         if (state.currentModule === 'rekap_adrenalin') renderCurrentModule();
-      }, (error) => console.error(error));
+      }, (error) => console.error("Firebase Sync Error (Custom Rules Adrenalin):", error));
 
-      // Listener 4: Laporan Pemantauan
+      // Listener 4: Laporan Pemantauan (Strict Path /artifacts/{appId}/public/data/records_pemantauan)
       onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'records_pemantauan'), (snap) => {
         state.recordsPemantauan = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.timestamp - a.timestamp);
         if (['pemantauan_1th', 'raport_terpadu'].includes(state.currentModule)) renderCurrentModule();
-      }, (error) => console.error(error));
+      }, (error) => console.error("Firebase Sync Error (Pemantauan Records):", error));
 
-      // Listener 5: Aturan Custom Pemantauan
+      // Listener 5: Aturan Custom Pemantauan (Strict Path /artifacts/{appId}/public/data/custom_rules_pemantauan)
       onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'custom_rules_pemantauan'), (snap) => {
         state.customRulesPemantauan = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
         if (state.currentModule === 'pemantauan_1th') renderCurrentModule();
-      }, (error) => console.error(error));
+      }, (error) => console.error("Firebase Sync Error (Custom Rules Pemantauan):", error));
     }
 
     /* =========================================================================
@@ -1862,8 +1883,37 @@ break-inside: avoid !important;
     /* =========================================================================
        10. MODUL 3: REKAPITULASI ADRENALIN LIVE
        ========================================================================= */
-    let tempEvidenceAdrenalin = '';
-    let isCompressingAdrenalin = false;
+    window.tempEvidenceAdrenalin = '';
+    window.isCompressingAdrenalin = false;
+
+    window.handleAdrenalinPhotoUpload = function(event) {
+      window.isCompressingAdrenalin = true;
+      window.compressImageInput(
+        event,
+        'adr-preview-img',
+        'adr-preview-status',
+        (b64) => {
+          window.tempEvidenceAdrenalin = b64;
+          window.isCompressingAdrenalin = false;
+        },
+        () => {
+          window.isCompressingAdrenalin = true;
+        }
+      );
+    };
+
+    window.clearAdrenalinPhoto = function() {
+      window.tempEvidenceAdrenalin = '';
+      window.isCompressingAdrenalin = false;
+      const box = document.getElementById('adr-preview-box');
+      if (box) box.classList.add('hidden');
+      const img = document.getElementById('adr-preview-img');
+      if (img) img.src = '';
+      const input = document.getElementById('adr-file-input');
+      if (input) input.value = '';
+      const status = document.getElementById('adr-preview-status');
+      if (status) status.innerText = '';
+    };
 
     function getRecapSummaryAdrenalin(searchTerm = '', sortBy = 'points') {
       const map = {};
@@ -1897,6 +1947,7 @@ break-inside: avoid !important;
             ${[
               { id: 'input', label: 'Form Input Pelanggaran', icon: 'plus-circle' },
               { id: 'klasemen', label: 'Papan Peringkat Poin', icon: 'flame' },
+              { id: 'galeri', label: 'Galeri Bukti Cloud', icon: 'image' },
               { id: 'laporan', label: 'Laporan PDF (Portrait)', icon: 'printer' }
             ].map(tab => `
               <button
@@ -1981,20 +2032,25 @@ break-inside: avoid !important;
                       `}
                     </div>
 
-                    <!-- Photo Upload -->
+                    <!-- Photo Upload (Direct Cloud Firestore Storage) -->
                     <div>
-                      <label class="block font-bold text-gray-700 mb-1">Bukti Foto (Opsional)</label>
+                      <label class="block font-bold text-gray-700 mb-1 flex items-center justify-between">
+                        <span>Bukti Foto Pelanggaran (Tersimpan ke Firebase Cloud)</span>
+                        <span class="text-[10px] text-emerald-700 font-mono font-bold flex items-center gap-1">
+                          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>Cloud Sync
+                        </span>
+                      </label>
                       <input 
                         type="file" 
                         id="adr-file-input"
                         accept="image/*"
-                        onchange="compressImageInput(event, 'adr-preview-img', 'adr-preview-status', (b64) => { tempEvidenceAdrenalin = b64; isCompressingAdrenalin = false; }, () => { isCompressingAdrenalin = true; })"
+                        onchange="handleAdrenalinPhotoUpload(event)"
                         class="w-full text-xs text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-[#8B181B] file:text-white border border-gray-300 rounded p-1.5 bg-white cursor-pointer"
                       />
                       <p id="adr-preview-status" class="text-[11px] text-gray-500 font-medium mt-1"></p>
                       
                       <div id="adr-preview-box" class="hidden mt-2 relative inline-block">
-                        <img id="adr-preview-img" src="" alt="Bukti" class="h-16 rounded border border-gray-300 shadow-sm object-cover" />
+                        <img id="adr-preview-img" src="" alt="Bukti" class="h-20 rounded-lg border-2 border-red-700 shadow-md object-cover" />
                         <button type="button" onclick="clearAdrenalinPhoto()" class="absolute -top-2 -right-2 bg-red-700 text-white rounded-full p-1 text-[10px] hover:bg-red-800 shadow cursor-pointer" title="Hapus foto pratinjau">✕</button>
                       </div>
                     </div>
@@ -2008,13 +2064,13 @@ break-inside: avoid !important;
                       type="submit" 
                       class="w-full bg-[#8B181B] hover:bg-[#6B1214] text-white py-2.5 rounded-lg font-bold shadow-sm transition-all text-xs sm:text-sm cursor-pointer active:scale-98"
                     >
-                      Simpan Pelanggaran
+                      Simpan Pelanggaran ke Firebase Cloud
                     </button>
                   </form>
                 </div>
               </div>
 
-              <!-- History Feed -->
+              <!-- History Feed with Photo Thumbnails -->
               <div class="lg:col-span-6 space-y-6">
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <div class="bg-gray-50 px-4 py-3 border-b border-gray-200 flex justify-between items-center">
@@ -2027,12 +2083,27 @@ break-inside: avoid !important;
                     ${state.recordsAdrenalin.length === 0 ? `
                       <p class="text-gray-400 italic text-center py-8 text-xs">Belum ada pelanggaran yang dicatat.</p>
                     ` : state.recordsAdrenalin.map(rec => `
-                      <div class="p-3 rounded-lg border border-gray-200 bg-white shadow-xs flex justify-between items-start gap-2 text-xs">
-                        <div>
-                          <div class="font-black text-gray-900">${rec.name} <span class="font-mono text-gray-500 font-normal">(${rec.nim})</span></div>
-                          <p class="text-red-800 font-bold mt-0.5">${rec.ruleName} <span class="text-gray-500 font-normal">[${rec.category}]</span></p>
-                          ${rec.notes ? `<p class="text-[11px] text-gray-600 mt-0.5 italic">"${rec.notes}"</p>` : ''}
-                          <p class="text-[10px] text-gray-400 mt-1">${rec.day} • ${rec.dateString}</p>
+                      <div class="p-3 rounded-lg border border-gray-200 bg-white shadow-xs flex justify-between items-start gap-2.5 text-xs">
+                        <div class="flex items-start gap-2.5 flex-1 min-w-0">
+                          ${rec.evidence ? `
+                            <img 
+                              src="${rec.evidence}" 
+                              alt="Bukti" 
+                              onclick="openEvidenceModal('${rec.id}', 'adrenalin')"
+                              class="w-11 h-11 rounded-lg object-cover border border-amber-300 shadow-2xs cursor-pointer hover:opacity-85 hover:scale-105 transition-all shrink-0" 
+                              title="Klik untuk memperbesar foto bukti Cloud"
+                            />
+                          ` : `
+                            <div class="w-11 h-11 rounded-lg bg-gray-100 border border-dashed border-gray-300 flex items-center justify-center shrink-0 text-gray-400" title="Tanpa foto bukti">
+                              <i data-lucide="image-off" class="w-4 h-4"></i>
+                            </div>
+                          `}
+                          <div class="min-w-0 flex-1">
+                            <div class="font-black text-gray-900 truncate">${rec.name} <span class="font-mono text-gray-500 font-normal">(${rec.nim})</span></div>
+                            <p class="text-red-800 font-bold mt-0.5">${rec.ruleName} <span class="text-gray-500 font-normal">[${rec.category}]</span></p>
+                            ${rec.notes ? `<p class="text-[11px] text-gray-600 mt-0.5 italic">"${rec.notes}"</p>` : ''}
+                            <p class="text-[10px] text-gray-400 mt-1">${rec.day} • ${rec.dateString}</p>
+                          </div>
                         </div>
                         <div class="flex flex-col items-end gap-1.5 shrink-0">
                           <span class="font-black text-[10px] px-2 py-0.5 bg-red-50 text-red-800 border border-red-200 rounded">
@@ -2046,7 +2117,7 @@ break-inside: avoid !important;
                               title="Buka Foto Bukti"
                             >
                               <i data-lucide="image" class="w-3 h-3 text-blue-600"></i>
-                              <span>Lihat Bukti</span>
+                              <span>Bukti Foto</span>
                             </button>
                           ` : ''}
                           ${!state.isLocked ? `
@@ -2127,6 +2198,66 @@ break-inside: avoid !important;
                   </table>
                 </div>
               </div>
+            </div>
+          ` : ''}
+
+          ${state.activeAdrenalinTab === 'galeri' ? `
+            <div class="space-y-4">
+              <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-xs flex flex-wrap justify-between items-center gap-3">
+                <div>
+                  <h3 class="font-black text-sm text-gray-900 flex items-center gap-2">
+                    <i data-lucide="images" class="w-4 h-4 text-red-800"></i> Galeri Bukti Foto Pelanggaran Adrenalin
+                  </h3>
+                  <p class="text-xs text-gray-500 mt-0.5">Seluruh bukti visual yang tersimpan langsung di Firebase Cloud Firestore.</p>
+                </div>
+                <div class="text-xs font-mono font-bold bg-red-50 text-red-800 px-3 py-1 rounded-lg border border-red-200">
+                  ${state.recordsAdrenalin.filter(r => !!r.evidence).length} Foto Tersimpan di Cloud
+                </div>
+              </div>
+
+              ${state.recordsAdrenalin.filter(r => !!r.evidence).length === 0 ? `
+                <div class="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300 text-gray-400 space-y-2">
+                  <i data-lucide="image-off" class="w-10 h-10 mx-auto text-gray-300"></i>
+                  <p class="text-xs font-bold text-gray-600">Belum ada bukti foto yang tersimpan di Firebase Cloud.</p>
+                  <p class="text-[11px] text-gray-400">Lampirkan foto saat mencatat pelanggaran di tab Form Input.</p>
+                </div>
+              ` : `
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  ${state.recordsAdrenalin.filter(r => !!r.evidence).map(rec => `
+                    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col">
+                      <div class="relative bg-gray-900 aspect-4/3 overflow-hidden cursor-pointer group" onclick="openEvidenceModal('${rec.id}', 'adrenalin')">
+                        <img src="${rec.evidence}" alt="Bukti ${rec.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                        <div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-bold">
+                          <i data-lucide="zoom-in" class="w-4 h-4"></i>
+                          <span>Lihat Penuh</span>
+                        </div>
+                        <span class="absolute top-2 right-2 bg-red-800/90 text-white text-[10px] font-black px-2 py-0.5 rounded shadow">
+                          +${rec.points} Pts
+                        </span>
+                      </div>
+                      <div class="p-3 flex-1 flex flex-col justify-between text-xs space-y-1.5">
+                        <div>
+                          <div class="font-black text-gray-900 truncate" title="${rec.name}">${rec.name}</div>
+                          <div class="text-[11px] font-mono text-gray-500">${rec.nim}</div>
+                          <div class="font-bold text-red-800 text-[11px] mt-1 line-clamp-2">${rec.ruleName}</div>
+                          ${rec.notes ? `<div class="text-[10px] text-gray-600 italic mt-0.5 line-clamp-1">"${rec.notes}"</div>` : ''}
+                        </div>
+                        <div class="pt-2 border-t border-gray-100 flex items-center justify-between text-[10px] text-gray-400">
+                          <span>${rec.day}</span>
+                          <div class="flex items-center gap-2">
+                            <button type="button" onclick="downloadEvidenceDirect('${rec.id}', 'adrenalin')" class="text-emerald-700 hover:text-emerald-900 font-bold flex items-center gap-0.5 cursor-pointer" title="Unduh foto ini">
+                              <i data-lucide="download" class="w-3 h-3"></i> Unduh
+                            </button>
+                            <button type="button" onclick="openEvidenceModal('${rec.id}', 'adrenalin')" class="text-blue-700 hover:text-blue-900 font-bold flex items-center gap-1 cursor-pointer">
+                              <i data-lucide="maximize-2" class="w-3 h-3"></i> Detail
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              `}
             </div>
           ` : ''}
 
@@ -2268,7 +2399,7 @@ break-inside: avoid !important;
     window.handleSaveRecordAdrenalin = async function(e) {
       e.preventDefault();
       if (!user) { showFeedbackModal('Database Error', 'Aplikasi sedang mencoba terhubung ke Firebase. Harap tunggu.'); return; }
-      if (isCompressingAdrenalin) {
+      if (window.isCompressingAdrenalin || isCompressingAdrenalin) {
         showFeedbackModal('Tunggu Sebentar', 'Foto sedang diproses dan dikompresi. Silakan tunggu beberapa saat sebelum menyimpan.');
         return;
       }
@@ -2290,6 +2421,8 @@ break-inside: avoid !important;
       let finalPoints = 0;
       let finalRuleId = ruleSelect;
       let finalType = 'Ringan';
+
+      const evidenceData = window.tempEvidenceAdrenalin || tempEvidenceAdrenalin || '';
 
       try {
         if (ruleSelect === 'Custom') {
@@ -2315,16 +2448,26 @@ break-inside: avoid !important;
         }
 
         await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'records'), {
-          nim: st.nim, name: st.name, ruleId: finalRuleId, ruleName: finalRuleName, category: finalCategory,
-          points: finalPoints, type: finalType, day: finalDay, notes: document.getElementById('adr-notes').value,
-          evidence: tempEvidenceAdrenalin || '', timestamp: Date.now(), dateString: new Date().toLocaleString('id-ID')
+          nim: st.nim, 
+          name: st.name, 
+          ruleId: finalRuleId, 
+          ruleName: finalRuleName, 
+          category: finalCategory,
+          points: finalPoints, 
+          type: finalType, 
+          day: finalDay, 
+          notes: document.getElementById('adr-notes')?.value || '',
+          evidence: evidenceData, 
+          timestamp: Date.now(), 
+          dateString: new Date().toLocaleString('id-ID')
         });
 
-        tempEvidenceAdrenalin = '';
-        showFeedbackModal('Berhasil Disimpan', 'Pelanggaran Adrenalin berhasil dicatat ke sistem Cloud.');
+        window.clearAdrenalinPhoto();
+        document.getElementById('form-record-adrenalin')?.reset();
+        showFeedbackModal('Berhasil Disimpan ke Cloud', 'Pelanggaran dan foto bukti telah berhasil diunggah dan tersimpan ke Firebase Cloud Firestore.');
       } catch (err) {
         console.error(err);
-        showFeedbackModal('Gagal', 'Terjadi kesalahan saat menyimpan pelanggaran.');
+        showFeedbackModal('Gagal', 'Terjadi kesalahan saat menyimpan pelanggaran ke Firebase.');
       }
     }
 
@@ -2370,9 +2513,40 @@ break-inside: avoid !important;
     /* =========================================================================
        11. MODUL 4: PEMANTAUAN 1 TAHUN
        ========================================================================= */
+    window.tempEvidencePemantauan = '';
+    window.isCompressingPemantauan = false;
     let tempEvidencePemantauan = '';
     let isCompressingPemantauan = false;
     let reportTypePemantauan = 'nama';
+
+    window.handlePemantauanPhotoUpload = function(event) {
+      window.isCompressingPemantauan = true;
+      window.compressImageInput(
+        event,
+        'pmn-preview-img',
+        'pmn-preview-status',
+        (b64) => {
+          window.tempEvidencePemantauan = b64;
+          window.isCompressingPemantauan = false;
+        },
+        () => {
+          window.isCompressingPemantauan = true;
+        }
+      );
+    };
+
+    window.clearPemantauanPhoto = function() {
+      window.tempEvidencePemantauan = '';
+      window.isCompressingPemantauan = false;
+      const box = document.getElementById('pmn-preview-box');
+      if (box) box.classList.add('hidden');
+      const img = document.getElementById('pmn-preview-img');
+      if (img) img.src = '';
+      const input = document.getElementById('pmn-file-input');
+      if (input) input.value = '';
+      const status = document.getElementById('pmn-preview-status');
+      if (status) status.innerText = '';
+    };
 
     function getRecapSummaryPemantauan(searchTerm = '', sortBy = 'points') {
       const map = {};
@@ -2406,6 +2580,7 @@ break-inside: avoid !important;
             ${[
               { id: 'input', label: 'Portal Pelaporan', icon: 'plus-circle' },
               { id: 'klasemen', label: 'Klasemen Pelanggaran', icon: 'user-check' },
+              { id: 'galeri', label: 'Galeri Bukti Cloud', icon: 'image' },
               { id: 'laporan', label: 'Laporan PDF (Portrait)', icon: 'printer' }
             ].map(tab => `
               <button
@@ -2493,21 +2668,22 @@ break-inside: avoid !important;
                     </div>
 
                     <div class="bg-red-50 p-3 rounded-lg border border-red-200">
-                      <label class="block text-xs font-black text-red-900 mb-1 flex items-center gap-1.5">
-                        <i data-lucide="camera" class="w-4 h-4 text-red-700"></i> BUKTI FOTO (WAJIB DILAMPIRKAN) *
+                      <label class="block text-xs font-black text-red-900 mb-1 flex items-center justify-between">
+                        <span class="flex items-center gap-1.5"><i data-lucide="camera" class="w-4 h-4 text-red-700"></i> BUKTI FOTO (WAJIB DILAMPIRKAN) *</span>
+                        <span class="text-[10px] text-emerald-700 font-mono font-bold">Cloud Firestore</span>
                       </label>
                       <input 
                         type="file" 
                         id="pmn-file-input"
                         accept="image/*"
                         required
-                        onchange="compressImageInput(event, 'pmn-preview-img', 'pmn-preview-status', (b64) => { tempEvidencePemantauan = b64; isCompressingPemantauan = false; }, () => { isCompressingPemantauan = true; })"
+                        onchange="handlePemantauanPhotoUpload(event)"
                         class="w-full text-xs text-gray-600 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-bold file:bg-red-800 file:text-white border border-red-300 rounded p-1.5 bg-white cursor-pointer"
                       />
                       <p id="pmn-preview-status" class="text-[11px] text-gray-600 font-medium mt-1"></p>
                       
                       <div id="pmn-preview-box" class="hidden mt-2 relative inline-block">
-                        <img id="pmn-preview-img" src="" alt="Bukti" class="h-16 rounded border-2 border-emerald-600 shadow-sm object-cover" />
+                        <img id="pmn-preview-img" src="" alt="Bukti" class="h-20 rounded-lg border-2 border-emerald-600 shadow-md object-cover" />
                         <button type="button" onclick="clearPemantauanPhoto()" class="absolute -top-2 -right-2 bg-red-700 text-white rounded-full p-1 text-[10px] hover:bg-red-800 shadow cursor-pointer" title="Hapus foto">✕</button>
                       </div>
                     </div>
@@ -2521,13 +2697,13 @@ break-inside: avoid !important;
                       type="submit" 
                       class="w-full bg-red-900 hover:bg-red-950 text-white py-2.5 rounded-lg font-bold shadow-sm transition-all text-xs sm:text-sm cursor-pointer active:scale-98"
                     >
-                      Kirim Laporan Resmi
+                      Kirim Laporan & Simpan Bukti ke Cloud
                     </button>
                   </form>
                 </div>
               </div>
 
-              <!-- History Feed -->
+              <!-- History Feed with Photo Thumbnails -->
               <div class="lg:col-span-6 space-y-6">
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <div class="bg-red-50 px-4 py-3 border-b border-red-100 flex justify-between items-center">
@@ -2540,12 +2716,27 @@ break-inside: avoid !important;
                     ${state.recordsPemantauan.length === 0 ? `
                       <p class="text-gray-400 italic text-center py-8 text-xs">Belum ada laporan yang masuk.</p>
                     ` : state.recordsPemantauan.map(rec => `
-                      <div class="p-3 rounded-lg border border-gray-200 bg-white shadow-xs flex justify-between items-start gap-2 text-xs">
-                        <div>
-                          <div class="font-black text-gray-900">${rec.name} <span class="font-mono text-gray-500 font-normal">(${rec.nim})</span></div>
-                          <p class="text-red-800 font-bold mt-0.5">${rec.ruleName} <span class="text-gray-500 font-normal">[${rec.category}]</span></p>
-                          ${rec.notes ? `<p class="text-[11px] text-gray-600 mt-0.5 italic">"${rec.notes}"</p>` : ''}
-                          <p class="text-[10px] text-gray-400 mt-1">${rec.day} • ${rec.dateString}</p>
+                      <div class="p-3 rounded-lg border border-gray-200 bg-white shadow-xs flex justify-between items-start gap-2.5 text-xs">
+                        <div class="flex items-start gap-2.5 flex-1 min-w-0">
+                          ${rec.evidence ? `
+                            <img 
+                              src="${rec.evidence}" 
+                              alt="Bukti" 
+                              onclick="openEvidenceModal('${rec.id}', 'pemantauan')"
+                              class="w-11 h-11 rounded-lg object-cover border border-emerald-400 shadow-2xs cursor-pointer hover:opacity-85 hover:scale-105 transition-all shrink-0" 
+                              title="Klik untuk melihat bukti foto Cloud"
+                            />
+                          ` : `
+                            <div class="w-11 h-11 rounded-lg bg-gray-100 border border-dashed border-gray-300 flex items-center justify-center shrink-0 text-gray-400">
+                              <i data-lucide="image-off" class="w-4 h-4"></i>
+                            </div>
+                          `}
+                          <div class="min-w-0 flex-1">
+                            <div class="font-black text-gray-900 truncate">${rec.name} <span class="font-mono text-gray-500 font-normal">(${rec.nim})</span></div>
+                            <p class="text-red-800 font-bold mt-0.5">${rec.ruleName} <span class="text-gray-500 font-normal">[${rec.category}]</span></p>
+                            ${rec.notes ? `<p class="text-[11px] text-gray-600 mt-0.5 italic">"${rec.notes}"</p>` : ''}
+                            <p class="text-[10px] text-gray-400 mt-1">${rec.day} • ${rec.dateString}</p>
+                          </div>
                         </div>
                         <div class="flex flex-col items-end gap-1.5 shrink-0">
                           <span class="font-black text-[10px] px-2 py-0.5 bg-red-50 text-red-800 border border-red-200 rounded">
@@ -2634,6 +2825,66 @@ break-inside: avoid !important;
                   </table>
                 </div>
               </div>
+            </div>
+          ` : ''}
+
+          ${state.activePemantauanTab === 'galeri' ? `
+            <div class="space-y-4">
+              <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-xs flex flex-wrap justify-between items-center gap-3">
+                <div>
+                  <h3 class="font-black text-sm text-gray-900 flex items-center gap-2">
+                    <i data-lucide="images" class="w-4 h-4 text-red-900"></i> Galeri Bukti Foto Pemantauan 1 Tahun
+                  </h3>
+                  <p class="text-xs text-gray-500 mt-0.5">Bukti foto investigasi dan pelanggaran tersimpan aman di Firebase Cloud Firestore.</p>
+                </div>
+                <div class="text-xs font-mono font-bold bg-red-50 text-red-900 px-3 py-1 rounded-lg border border-red-200">
+                  ${state.recordsPemantauan.filter(r => !!r.evidence).length} Foto Cloud Tersedia
+                </div>
+              </div>
+
+              ${state.recordsPemantauan.filter(r => !!r.evidence).length === 0 ? `
+                <div class="text-center py-16 bg-white rounded-xl border border-dashed border-gray-300 text-gray-400 space-y-2">
+                  <i data-lucide="image-off" class="w-10 h-10 mx-auto text-gray-300"></i>
+                  <p class="text-xs font-bold text-gray-600">Belum ada foto bukti pemantauan di Firebase Cloud.</p>
+                  <p class="text-[11px] text-gray-400">Setiap laporan yang dikirim akan otomatis menyimpan fotonya ke sini.</p>
+                </div>
+              ` : `
+                <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  ${state.recordsPemantauan.filter(r => !!r.evidence).map(rec => `
+                    <div class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col">
+                      <div class="relative bg-gray-900 aspect-4/3 overflow-hidden cursor-pointer group" onclick="openEvidenceModal('${rec.id}', 'pemantauan')">
+                        <img src="${rec.evidence}" alt="Bukti ${rec.name}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                        <div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 text-white text-xs font-bold">
+                          <i data-lucide="zoom-in" class="w-4 h-4"></i>
+                          <span>Lihat Penuh</span>
+                        </div>
+                        <span class="absolute top-2 right-2 bg-red-900/90 text-white text-[10px] font-black px-2 py-0.5 rounded shadow">
+                          +${rec.points} Pts
+                        </span>
+                      </div>
+                      <div class="p-3 flex-1 flex flex-col justify-between text-xs space-y-1.5">
+                        <div>
+                          <div class="font-black text-gray-900 truncate" title="${rec.name}">${rec.name}</div>
+                          <div class="text-[11px] font-mono text-gray-500">${rec.nim}</div>
+                          <div class="font-bold text-red-800 text-[11px] mt-1 line-clamp-2">${rec.ruleName}</div>
+                          ${rec.notes ? `<div class="text-[10px] text-gray-600 italic mt-0.5 line-clamp-1">"${rec.notes}"</div>` : ''}
+                        </div>
+                        <div class="pt-2 border-t border-gray-100 flex items-center justify-between text-[10px] text-gray-400">
+                          <span>${rec.day}</span>
+                          <div class="flex items-center gap-2">
+                            <button type="button" onclick="downloadEvidenceDirect('${rec.id}', 'pemantauan')" class="text-emerald-700 hover:text-emerald-900 font-bold flex items-center gap-0.5 cursor-pointer" title="Unduh foto ini">
+                              <i data-lucide="download" class="w-3 h-3"></i> Unduh
+                            </button>
+                            <button type="button" onclick="openEvidenceModal('${rec.id}', 'pemantauan')" class="text-blue-700 hover:text-blue-900 font-bold flex items-center gap-1 cursor-pointer">
+                              <i data-lucide="maximize-2" class="w-3 h-3"></i> Detail
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              `}
             </div>
           ` : ''}
 
@@ -2778,11 +3029,12 @@ break-inside: avoid !important;
     window.handleSaveRecordPemantauan = async function(e) {
       e.preventDefault();
       if (!user) { showFeedbackModal('Database Error', 'Menunggu koneksi Firebase. Harap tunggu.'); return; }
-      if (isCompressingPemantauan) {
+      if (window.isCompressingPemantauan || isCompressingPemantauan) {
         showFeedbackModal('Tunggu Sebentar', 'Foto bukti sedang diproses kompresi. Silakan tunggu 1-2 detik.');
         return;
       }
-      if (!tempEvidencePemantauan) {
+      const evidenceData = window.tempEvidencePemantauan || tempEvidencePemantauan || '';
+      if (!evidenceData) {
         showFeedbackModal('Foto Bukti Wajib', 'Laporan pemantauan tidak dapat dikirim tanpa melampirkan foto bukti pelanggaran.');
         return;
       }
@@ -2791,7 +3043,7 @@ break-inside: avoid !important;
       let studentName = 'PESERTA TANPA NAMA / ANONIM';
 
       if (reportTypePemantauan === 'nama') {
-        const nim = document.getElementById('pmn-student-select').value;
+        const nim = document.getElementById('pmn-student-select')?.value;
         if (!nim) {
           showFeedbackModal('Pilih Peserta', 'Silakan tentukan nama peserta yang dilaporkan.');
           return;
@@ -2803,9 +3055,9 @@ break-inside: avoid !important;
         }
       }
 
-      const day = document.getElementById('pmn-day-select').value;
-      const cat = document.getElementById('pmn-cat-select').value;
-      const ruleId = document.getElementById('pmn-rule-select').value;
+      const day = document.getElementById('pmn-day-select')?.value || 'Bulan 1';
+      const cat = document.getElementById('pmn-cat-select')?.value || 'ATRIBUT';
+      const ruleId = document.getElementById('pmn-rule-select')?.value;
 
       const allRules = [...STATIC_VIOLATION_RULES, ...state.customRulesPemantauan];
       const rule = allRules.find(r => r.id === ruleId);
@@ -2820,17 +3072,18 @@ break-inside: avoid !important;
           points: rule ? rule.points : 2,
           type: rule ? rule.type : 'Ringan',
           day: day,
-          notes: document.getElementById('pmn-notes').value,
-          evidence: tempEvidencePemantauan,
+          notes: document.getElementById('pmn-notes')?.value || '',
+          evidence: evidenceData,
           timestamp: Date.now(),
           dateString: new Date().toLocaleString('id-ID')
         });
 
-        tempEvidencePemantauan = '';
-        showFeedbackModal('Laporan Diterima', 'Laporan pemantauan 1 tahun berhasil dicatat ke sistem Cloud.');
+        window.clearPemantauanPhoto();
+        document.getElementById('form-record-pemantauan')?.reset();
+        showFeedbackModal('Laporan & Foto Tersimpan', 'Laporan pemantauan 1 tahun dan foto bukti telah berhasil dicatat dan disinkronkan ke Firebase Cloud.');
       } catch (err) {
         console.error(err);
-        showFeedbackModal('Gagal', 'Terjadi kesalahan saat mengirim laporan.');
+        showFeedbackModal('Gagal', 'Terjadi kesalahan saat mengirim laporan ke Firebase.');
       }
     }
 
@@ -3434,6 +3687,90 @@ break-inside: avoid !important;
       reader.readAsDataURL(file);
     }
 
+    window.downloadEvidenceBlob = function(dataURI, filename) {
+      if (!dataURI) {
+        showFeedbackModal('Foto Kosong', 'Data foto bukti tidak ditemukan.');
+        return;
+      }
+      try {
+        showToast('Menyiapkan dan mengunduh foto bukti...');
+        let blob;
+        if (dataURI.startsWith('data:')) {
+          const parts = dataURI.split(',');
+          const mimeMatch = parts[0].match(/:(.*?);/);
+          const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+          const byteString = atob(parts[1]);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          blob = new Blob([ab], { type: mime });
+        } else {
+          const a = document.createElement('a');
+          a.href = dataURI;
+          a.download = filename || 'Bukti_Pelanggaran.jpg';
+          a.target = '_blank';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          showToast('Unduhan foto berhasil diproses!');
+          return;
+        }
+
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.style.display = 'none';
+        link.href = blobUrl;
+        link.download = filename || 'Bukti_Pelanggaran.jpg';
+        document.body.appendChild(link);
+        link.click();
+
+        setTimeout(() => {
+          document.body.removeChild(link);
+          URL.revokeObjectURL(blobUrl);
+        }, 3000);
+
+        showToast('Foto bukti berhasil diunduh!');
+      } catch (err) {
+        console.error('Error saat unduh blob foto:', err);
+        showFeedbackModal('Gagal Mengunduh Otomatis', 'Peramban membatasi pengunduhan data URL. Silakan klik kanan atau tekan lama pada foto di layar lalu pilih "Simpan Gambar Sebagai...".');
+      }
+    };
+
+    window.currentEvidenceRecord = null;
+
+    window.handleDownloadCurrentEvidence = function() {
+      if (!window.currentEvidenceRecord || !window.currentEvidenceRecord.evidence) {
+        showFeedbackModal('Gagal', 'Tidak ada data foto bukti yang dapat diunduh.');
+        return;
+      }
+      const rec = window.currentEvidenceRecord;
+      const cleanDay = (rec.day || 'bukti').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Bukti_${rec.nim}_${cleanDay}.jpg`;
+      window.downloadEvidenceBlob(rec.evidence, filename);
+    };
+
+    window.downloadEvidenceDirect = function(recordId, type) {
+      let rec = null;
+      if (type === 'adrenalin') {
+        rec = state.recordsAdrenalin.find(r => r.id === recordId);
+      } else if (type === 'pemantauan') {
+        rec = state.recordsPemantauan.find(r => r.id === recordId);
+      } else {
+        rec = state.recordsAdrenalin.find(r => r.id === recordId) || state.recordsPemantauan.find(r => r.id === recordId);
+      }
+
+      if (!rec || !rec.evidence) {
+        showFeedbackModal('Foto Tidak Ditemukan', 'Data foto bukti tidak ditemukan pada rekapan ini.');
+        return;
+      }
+
+      const cleanDay = (rec.day || 'bukti').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Bukti_${rec.nim}_${cleanDay}.jpg`;
+      window.downloadEvidenceBlob(rec.evidence, filename);
+    };
+
     window.openEvidenceModal = function(recordId, type) {
       let rec = null;
       if (type === 'adrenalin') {
@@ -3449,22 +3786,21 @@ break-inside: avoid !important;
         return;
       }
 
+      window.currentEvidenceRecord = rec;
+
       const modal = document.getElementById('modal-evidence');
       const img = document.getElementById('evidence-modal-img');
       const title = document.getElementById('evidence-modal-title');
       const info = document.getElementById('evidence-modal-info');
-      const downloadBtn = document.getElementById('evidence-modal-download');
 
       img.src = rec.evidence;
       title.innerText = `Bukti Foto: ${rec.name} (${rec.nim})`;
       info.innerHTML = `<span class="font-bold text-gray-900">${rec.ruleName}</span> <span class="text-gray-500">• ${rec.day} (${rec.dateString || ''})</span>`;
-      downloadBtn.href = rec.evidence;
-      downloadBtn.download = `Bukti_${rec.nim}_${rec.day || 'pelanggaran'}.jpg`;
 
       modal.classList.remove('hidden');
       modal.classList.add('flex');
       lucide.createIcons();
-    }
+    };
 
     window.closeEvidenceModal = function() {
       const modal = document.getElementById('modal-evidence');
@@ -3473,6 +3809,7 @@ break-inside: avoid !important;
         modal.classList.remove('flex');
         const img = document.getElementById('evidence-modal-img');
         if (img) img.src = '';
+        window.currentEvidenceRecord = null;
       }
     }
 
@@ -3709,7 +4046,6 @@ break-inside: avoid !important;
     /* =========================================================================
        16. BINDING GLOBAL & BOOTSTRAP APPLIKASI
        ========================================================================= */
-    // Mengekspos seluruh fungsi yang diperlukan oleh event HTML (onclick, dsb.) ke objek window
     window.dismissSplash = dismissSplash;
     window.replaySplash = replaySplash;
     window.handleToggleLock = handleToggleLock;
@@ -3734,6 +4070,13 @@ break-inside: avoid !important;
     window.filterKlasemenPemantauan = filterKlasemenPemantauan;
     window.getCombinedRaportData = getCombinedRaportData;
     window.renderModulRaportTerpadu = renderModulRaportTerpadu;
+    window.clearAdrenalinPhoto = clearAdrenalinPhoto;
+    window.clearPemantauanPhoto = clearPemantauanPhoto;
+    window.openEvidenceModal = openEvidenceModal;
+    window.closeEvidenceModal = closeEvidenceModal;
+    window.downloadEvidenceBlob = downloadEvidenceBlob;
+    window.handleDownloadCurrentEvidence = handleDownloadCurrentEvidence;
+    window.downloadEvidenceDirect = downloadEvidenceDirect;
 
     window.addEventListener('DOMContentLoaded', () => {
       initSplashScreen();
