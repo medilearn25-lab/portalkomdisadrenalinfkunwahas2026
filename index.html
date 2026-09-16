@@ -158,7 +158,7 @@ break-inside: avoid !important;
         <div>
           <div class="flex items-center gap-2">
             <span class="font-extrabold tracking-widest text-[#D4AF37] text-base sm:text-lg uppercase drop-shadow-sm group-hover:text-amber-200 transition-colors">ADRENALIN FK UNWAHAS</span>
-            <span class="text-[10px] bg-red-950 text-red-200 px-2 py-0.5 rounded font-mono border border-red-800">HTML v3.0</span>
+            <span class="text-[10px] bg-red-950 text-red-200 px-2 py-0.5 rounded font-mono border border-red-800">UNI v3.0</span>
           </div>
           <p class="text-[11px] text-red-200 tracking-wider">Portal Terpadu Sistem Kedisiplinan & Etika Akademika</p>
         </div>
@@ -507,7 +507,11 @@ break-inside: avoid !important;
     </div>
   </footer>
 
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, doc, setDoc, addDoc, updateDoc, deleteDoc, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
     /* =========================================================================
        1. DATA AWAL: 151 PESERTA MAHASISWA BARU ADRENALIN 2026
        ========================================================================= */
@@ -1225,70 +1229,32 @@ break-inside: avoid !important;
     ];
 
     /* =========================================================================
-       2. MANAJEMEN STATE APLIKASI
+       2. MANAJEMEN STATE & FIREBASE LIVE SYNC
        ========================================================================= */
-    const STORAGE_KEY = 'adrenalin_portal_v3_state';
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-adrenalin-app';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    let user = null;
 
-    function loadInitialState() {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          return {
-            currentModule: 'tatib_peserta',
-            isLocked: true,
-            activePesertaSubTab: 'home',
-            panitiaActiveTab: 'rapat',
-            panitiaSearchQuery: '',
-            selectedPanitiaRuleId: null,
-            activeAdrenalinTab: 'input',
-            activePemantauanTab: 'input',
-            students: parsed.students || INITIAL_STUDENTS,
-            recordsAdrenalin: parsed.recordsAdrenalin || [],
-            customRulesAdrenalin: parsed.customRulesAdrenalin || [],
-            recordsPemantauan: parsed.recordsPemantauan || [],
-            customRulesPemantauan: parsed.customRulesPemantauan || [],
-            selectedRaportNim: ''
-          };
-        } catch (e) {
-          console.error("Gagal memuat local state", e);
-        }
-      }
-      return {
-        currentModule: 'tatib_peserta',
-        isLocked: true,
-        activePesertaSubTab: 'home',
-        panitiaActiveTab: 'rapat',
-        panitiaSearchQuery: '',
-        selectedPanitiaRuleId: null,
-        activeAdrenalinTab: 'input',
-        activePemantauanTab: 'input',
-        students: INITIAL_STUDENTS,
-        recordsAdrenalin: [],
-        customRulesAdrenalin: [],
-        recordsPemantauan: [],
-        customRulesPemantauan: [],
-        selectedRaportNim: ''
-      };
-    }
-
-    const state = loadInitialState();
-
-    function saveState() {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({
-          students: state.students,
-          recordsAdrenalin: state.recordsAdrenalin,
-          customRulesAdrenalin: state.customRulesAdrenalin,
-          recordsPemantauan: state.recordsPemantauan,
-          customRulesPemantauan: state.customRulesPemantauan
-        }));
-      } catch (err) {
-        console.error("Gagal menyimpan ke localStorage:", err);
-        showFeedbackModal('Penyimpanan Penuh', 'Penyimpanan lokal browser penuh karena ukuran foto. Disarankan mencadangkan data melalui Backup Master JSON.');
-      }
-      updateHeaderCounts();
-    }
+    const state = {
+      currentModule: 'tatib_peserta',
+      isLocked: true,
+      activePesertaSubTab: 'home',
+      panitiaActiveTab: 'rapat',
+      panitiaSearchQuery: '',
+      selectedPanitiaRuleId: null,
+      activeAdrenalinTab: 'input',
+      activePemantauanTab: 'input',
+      students: INITIAL_STUDENTS.map(s => ({ id: 'init-' + s.nim, ...s })).sort((a, b) => a.name.localeCompare(b.name)),
+      recordsAdrenalin: [],
+      customRulesAdrenalin: [],
+      recordsPemantauan: [],
+      customRulesPemantauan: [],
+      selectedRaportNim: ''
+    };
+    window.state = state;
 
     function updateHeaderCounts() {
       const countEl = document.getElementById('header-student-count');
@@ -1300,7 +1266,72 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       3. SPLASH SCREEN LOGIC
+       3. FIREBASE REALTIME LISTENERS & AUTH
+       ========================================================================= */
+    async function initFirebase() {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+      user = auth.currentUser;
+      if (user) {
+        setupRealtimeListeners();
+      }
+    }
+
+    function setupRealtimeListeners() {
+      // Listener 1: Mahasiswa Sentral
+      onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'students'), (snap) => {
+        const cloudStudents = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const map = new Map();
+        INITIAL_STUDENTS.forEach(s => map.set(s.nim, { id: 'init-' + s.nim, ...s }));
+        
+        cloudStudents.forEach(s => {
+          if (s._deleted) map.delete(s.nim);
+          else map.set(s.nim, s);
+        });
+        
+        state.students = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+        updateHeaderCounts();
+        
+        const modal = document.getElementById('modal-student');
+        if(modal && !modal.classList.contains('hidden')){
+           renderStudentTableModal();
+        }
+        if (['rekap_adrenalin', 'pemantauan_1th', 'raport_terpadu'].includes(state.currentModule)) {
+           const main = document.getElementById('main-content');
+           if (main) renderCurrentModule();
+        }
+      }, (error) => console.error("Firebase Sync Error (Students):", error));
+
+      // Listener 2: Rekap Adrenalin
+      onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'records'), (snap) => {
+        state.recordsAdrenalin = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.timestamp - a.timestamp);
+        if (['rekap_adrenalin', 'raport_terpadu'].includes(state.currentModule)) renderCurrentModule();
+      }, (error) => console.error(error));
+
+      // Listener 3: Aturan Custom Adrenalin
+      onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'custom_rules'), (snap) => {
+        state.customRulesAdrenalin = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+        if (state.currentModule === 'rekap_adrenalin') renderCurrentModule();
+      }, (error) => console.error(error));
+
+      // Listener 4: Laporan Pemantauan
+      onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'records_pemantauan'), (snap) => {
+        state.recordsPemantauan = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.timestamp - a.timestamp);
+        if (['pemantauan_1th', 'raport_terpadu'].includes(state.currentModule)) renderCurrentModule();
+      }, (error) => console.error(error));
+
+      // Listener 5: Aturan Custom Pemantauan
+      onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'custom_rules_pemantauan'), (snap) => {
+        state.customRulesPemantauan = snap.docs.map(d => ({ docId: d.id, ...d.data() }));
+        if (state.currentModule === 'pemantauan_1th') renderCurrentModule();
+      }, (error) => console.error(error));
+    }
+
+    /* =========================================================================
+       4. SPLASH SCREEN LOGIC
        ========================================================================= */
     function initSplashScreen() {
       const bar = document.getElementById('splash-progress-bar');
@@ -1310,13 +1341,13 @@ break-inside: avoid !important;
       setTimeout(() => {
         if (bar) bar.style.width = '55%';
         if (text) text.innerText = '55%';
-        if (status) status.innerText = 'Menyinkronkan 151 Peserta Resmi...';
+        if (status) status.innerText = 'Menghubungkan Server SSO & Database...';
       }, 700);
 
       setTimeout(() => {
         if (bar) bar.style.width = '88%';
         if (text) text.innerText = '88%';
-        if (status) status.innerText = 'Menyiapkan Rekapitulasi & Raport...';
+        if (status) status.innerText = 'Menyinkronkan Rekapitulasi & Raport...';
       }, 1600);
 
       setTimeout(() => {
@@ -1351,7 +1382,7 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       4. SECURITY LOCK TOGGLE & PIN
+       5. SECURITY LOCK TOGGLE & PIN
        ========================================================================= */
     function handleToggleLock() {
       if (state.isLocked) {
@@ -1390,24 +1421,32 @@ break-inside: avoid !important;
     function updateLockUI() {
       const btn = document.getElementById('btn-lock-toggle');
       const label = document.getElementById('lock-label');
-      const icon = document.getElementById('lock-icon');
+      let icon = document.getElementById('lock-icon');
 
       if (state.isLocked) {
         btn.className = "px-3 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-black transition-all shadow-sm cursor-pointer active:scale-95 bg-red-950/80 border-red-700 hover:bg-red-900 text-red-200";
         label.innerText = "Hanya Lihat";
-        icon.setAttribute('data-lucide', 'lock');
-        icon.className = "w-4 h-4 text-red-300";
+        
+        const newIcon = document.createElement('i');
+        newIcon.id = 'lock-icon';
+        newIcon.setAttribute('data-lucide', 'lock');
+        newIcon.setAttribute('class', 'w-4 h-4 text-red-300');
+        if (icon && icon.parentNode) icon.parentNode.replaceChild(newIcon, icon);
       } else {
         btn.className = "px-3 py-1.5 rounded-lg border flex items-center gap-1.5 text-xs font-black transition-all shadow-sm cursor-pointer active:scale-95 bg-emerald-700 border-emerald-400 hover:bg-emerald-600 text-white";
         label.innerText = "Bisa Edit";
-        icon.setAttribute('data-lucide', 'unlock');
-        icon.className = "w-4 h-4 text-white";
+        
+        const newIcon = document.createElement('i');
+        newIcon.id = 'lock-icon';
+        newIcon.setAttribute('data-lucide', 'unlock');
+        newIcon.setAttribute('class', 'w-4 h-4 text-white');
+        if (icon && icon.parentNode) icon.parentNode.replaceChild(newIcon, icon);
       }
       lucide.createIcons();
     }
 
     /* =========================================================================
-       5. MODAL DIALOG FEEDBACK
+       6. MODAL DIALOG FEEDBACK
        ========================================================================= */
     let pendingConfirmAction = null;
 
@@ -1451,7 +1490,7 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       6. NAVIGATION & TAB SWITCHING
+       7. NAVIGATION & TAB SWITCHING
        ========================================================================= */
     const MODULES = [
       { id: 'tatib_peserta', label: 'Tatib Peserta', icon: 'book-open' },
@@ -1512,7 +1551,7 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       7. MODUL 1: TATA TERTIB PESERTA
+       8. MODUL 1: TATA TERTIB PESERTA
        ========================================================================= */
     function renderModulTatibPeserta(container) {
       container.innerHTML = `
@@ -1645,19 +1684,23 @@ break-inside: avoid !important;
 
     function toggleAccordion(contentId, chevronId) {
       const el = document.getElementById(contentId);
-      const icon = document.getElementById(chevronId);
+      let icon = document.getElementById(chevronId);
       if (el) {
         const isHidden = el.classList.contains('hidden');
         el.classList.toggle('hidden');
         if (icon) {
-          icon.setAttribute('data-lucide', isHidden ? 'chevron-up' : 'chevron-down');
+          const newIcon = document.createElement('i');
+          newIcon.id = chevronId;
+          newIcon.setAttribute('data-lucide', isHidden ? 'chevron-up' : 'chevron-down');
+          newIcon.setAttribute('class', 'w-4 h-4 text-gray-500');
+          if (icon && icon.parentNode) icon.parentNode.replaceChild(newIcon, icon);
           lucide.createIcons();
         }
       }
     }
 
     /* =========================================================================
-       8. MODUL 2: TATA TERTIB PANITIA
+       9. MODUL 2: TATA TERTIB PANITIA
        ========================================================================= */
     function renderModulTatibPanitia(container) {
       const filtered = PANITIA_RULES_DATA.filter(r => 
@@ -1817,7 +1860,7 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       9. MODUL 3: REKAPITULASI ADRENALIN LIVE
+       10. MODUL 3: REKAPITULASI ADRENALIN LIVE
        ========================================================================= */
     let tempEvidenceAdrenalin = '';
     let isCompressingAdrenalin = false;
@@ -2194,7 +2237,7 @@ break-inside: avoid !important;
       lucide.createIcons();
     }
 
-    function handleAdrenalinCatChange(cat) {
+    window.handleAdrenalinCatChange = function(cat) {
       const ruleSelect = document.getElementById('adr-rule-select');
       const customBox = document.getElementById('adr-custom-box');
       
@@ -2213,7 +2256,7 @@ break-inside: avoid !important;
       }
     }
 
-    function handleAdrenalinRuleChange(ruleVal) {
+    window.handleAdrenalinRuleChange = function(ruleVal) {
       const customBox = document.getElementById('adr-custom-box');
       if (ruleVal === 'Custom') {
         customBox.classList.remove('hidden');
@@ -2222,8 +2265,9 @@ break-inside: avoid !important;
       }
     }
 
-    function handleSaveRecordAdrenalin(e) {
+    window.handleSaveRecordAdrenalin = async function(e) {
       e.preventDefault();
+      if (!user) { showFeedbackModal('Database Error', 'Aplikasi sedang mencoba terhubung ke Firebase. Harap tunggu.'); return; }
       if (isCompressingAdrenalin) {
         showFeedbackModal('Tunggu Sebentar', 'Foto sedang diproses dan dikompresi. Silakan tunggu beberapa saat sebelum menyimpan.');
         return;
@@ -2247,61 +2291,51 @@ break-inside: avoid !important;
       let finalRuleId = ruleSelect;
       let finalType = 'Ringan';
 
-      if (ruleSelect === 'Custom') {
-        const customCat = document.getElementById('adr-custom-cat').value;
-        const customName = document.getElementById('adr-custom-rulename').value;
-        const customPts = document.getElementById('adr-custom-points') ? parseInt(document.getElementById('adr-custom-points').value, 10) : 0;
+      try {
+        if (ruleSelect === 'Custom') {
+          const customCat = document.getElementById('adr-custom-cat').value;
+          const customName = document.getElementById('adr-custom-rulename').value;
+          const customPts = document.getElementById('adr-custom-points') ? parseInt(document.getElementById('adr-custom-points').value, 10) : 0;
 
-        finalCategory = catSelect === 'Custom' ? (customCat.trim().toUpperCase() || 'LAINNYA') : catSelect;
-        finalRuleName = customName.trim() || 'Pelanggaran Khusus';
-        finalPoints = state.isLocked ? 0 : (isNaN(customPts) ? 0 : customPts);
-        finalRuleId = 'CUST-' + Date.now();
-        finalType = finalPoints >= 15 ? 'Berat' : (finalPoints >= 5 ? 'Sedang' : (finalPoints > 0 ? 'Ringan' : 'Catatan'));
+          finalCategory = catSelect === 'Custom' ? (customCat.trim().toUpperCase() || 'LAINNYA') : catSelect;
+          finalRuleName = customName.trim() || 'Pelanggaran Khusus';
+          finalPoints = state.isLocked ? 0 : (isNaN(customPts) ? 0 : customPts);
+          finalRuleId = 'CUST-' + Date.now();
+          finalType = finalPoints >= 15 ? 'Berat' : (finalPoints >= 5 ? 'Sedang' : (finalPoints > 0 ? 'Ringan' : 'Catatan'));
 
-        state.customRulesAdrenalin.push({
-          id: finalRuleId,
-          category: finalCategory,
-          name: finalRuleName,
-          points: finalPoints,
-          type: finalType
-        });
-      } else {
-        const allRules = [...STATIC_VIOLATION_RULES, ...state.customRulesAdrenalin];
-        const rule = allRules.find(r => r.id === ruleSelect);
-        if (rule) {
-          finalRuleName = rule.name;
-          finalPoints = rule.points;
-          finalType = rule.type;
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'custom_rules'), {
+            id: finalRuleId, category: finalCategory, name: finalRuleName, points: finalPoints, type: finalType
+          });
+        } else {
+          const allRules = [...STATIC_VIOLATION_RULES, ...state.customRulesAdrenalin];
+          const rule = allRules.find(r => r.id === ruleSelect);
+          if (rule) {
+            finalRuleName = rule.name; finalPoints = rule.points; finalType = rule.type;
+          }
         }
+
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'records'), {
+          nim: st.nim, name: st.name, ruleId: finalRuleId, ruleName: finalRuleName, category: finalCategory,
+          points: finalPoints, type: finalType, day: finalDay, notes: document.getElementById('adr-notes').value,
+          evidence: tempEvidenceAdrenalin || '', timestamp: Date.now(), dateString: new Date().toLocaleString('id-ID')
+        });
+
+        tempEvidenceAdrenalin = '';
+        showFeedbackModal('Berhasil Disimpan', 'Pelanggaran Adrenalin berhasil dicatat ke sistem Cloud.');
+      } catch (err) {
+        console.error(err);
+        showFeedbackModal('Gagal', 'Terjadi kesalahan saat menyimpan pelanggaran.');
       }
-
-      state.recordsAdrenalin.unshift({
-        id: 'rec-adr-' + Date.now(),
-        nim: st.nim,
-        name: st.name,
-        ruleId: finalRuleId,
-        ruleName: finalRuleName,
-        category: finalCategory,
-        points: finalPoints,
-        type: finalType,
-        day: finalDay,
-        notes: document.getElementById('adr-notes').value,
-        evidence: tempEvidenceAdrenalin || '',
-        timestamp: Date.now(),
-        dateString: new Date().toLocaleString('id-ID')
-      });
-
-      saveState();
-      tempEvidenceAdrenalin = '';
-      showFeedbackModal('Berhasil Disimpan', 'Pelanggaran Adrenalin berhasil dicatat ke sistem bersama foto bukti.');
-      renderModulRekapAdrenalin(document.getElementById('main-content'));
     }
 
-    function deleteRecordAdrenalin(id) {
-      showFeedbackModal('Konfirmasi Hapus', 'Hapus rekapan pelanggaran ini dari data?', true, () => {
-        state.recordsAdrenalin = state.recordsAdrenalin.filter(r => r.id !== id);
-        saveState();
-        renderModulRekapAdrenalin(document.getElementById('main-content'));
+    window.deleteRecordAdrenalin = function(id) {
+      showFeedbackModal('Konfirmasi Hapus', 'Hapus rekapan pelanggaran ini dari data Cloud?', true, async () => {
+        if (!user) return;
+        try {
+          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', id));
+        } catch (err) {
+          console.error(err);
+        }
       });
     }
 
@@ -2334,7 +2368,7 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       10. MODUL 4: PEMANTAUAN 1 TAHUN
+       11. MODUL 4: PEMANTAUAN 1 TAHUN
        ========================================================================= */
     let tempEvidencePemantauan = '';
     let isCompressingPemantauan = false;
@@ -2709,7 +2743,7 @@ break-inside: avoid !important;
       lucide.createIcons();
     }
 
-    function setReportTypePemantauan(type) {
+    window.setReportTypePemantauan = function(type) {
       reportTypePemantauan = type;
       const btnNama = document.getElementById('btn-pmn-type-nama');
       const btnAnonim = document.getElementById('btn-pmn-type-anonim');
@@ -2731,7 +2765,7 @@ break-inside: avoid !important;
       }
     }
 
-    function handlePemantauanCatChange(cat) {
+    window.handlePemantauanCatChange = function(cat) {
       const ruleSelect = document.getElementById('pmn-rule-select');
       const allRules = [...STATIC_VIOLATION_RULES, ...state.customRulesPemantauan];
       const filtered = allRules.filter(r => r.category === cat);
@@ -2741,8 +2775,9 @@ break-inside: avoid !important;
       `;
     }
 
-    function handleSaveRecordPemantauan(e) {
+    window.handleSaveRecordPemantauan = async function(e) {
       e.preventDefault();
+      if (!user) { showFeedbackModal('Database Error', 'Menunggu koneksi Firebase. Harap tunggu.'); return; }
       if (isCompressingPemantauan) {
         showFeedbackModal('Tunggu Sebentar', 'Foto bukti sedang diproses kompresi. Silakan tunggu 1-2 detik.');
         return;
@@ -2775,37 +2810,42 @@ break-inside: avoid !important;
       const allRules = [...STATIC_VIOLATION_RULES, ...state.customRulesPemantauan];
       const rule = allRules.find(r => r.id === ruleId);
 
-      state.recordsPemantauan.unshift({
-        id: 'rec-pmn-' + Date.now(),
-        nim: studentNim,
-        name: studentName,
-        ruleId: rule ? rule.id : 'CUSTOM',
-        ruleName: rule ? rule.name : 'Pelanggaran',
-        category: cat,
-        points: rule ? rule.points : 2,
-        type: rule ? rule.type : 'Ringan',
-        day: day,
-        notes: document.getElementById('pmn-notes').value,
-        evidence: tempEvidencePemantauan,
-        timestamp: Date.now(),
-        dateString: new Date().toLocaleString('id-ID')
-      });
+      try {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'records_pemantauan'), {
+          nim: studentNim,
+          name: studentName,
+          ruleId: rule ? rule.id : 'CUSTOM',
+          ruleName: rule ? rule.name : 'Pelanggaran',
+          category: cat,
+          points: rule ? rule.points : 2,
+          type: rule ? rule.type : 'Ringan',
+          day: day,
+          notes: document.getElementById('pmn-notes').value,
+          evidence: tempEvidencePemantauan,
+          timestamp: Date.now(),
+          dateString: new Date().toLocaleString('id-ID')
+        });
 
-      saveState();
-      tempEvidencePemantauan = '';
-      showFeedbackModal('Laporan Diterima', 'Laporan pemantauan 1 tahun berhasil dicatat ke sistem bersama foto bukti otentik.');
-      renderModulPemantauan(document.getElementById('main-content'));
+        tempEvidencePemantauan = '';
+        showFeedbackModal('Laporan Diterima', 'Laporan pemantauan 1 tahun berhasil dicatat ke sistem Cloud.');
+      } catch (err) {
+        console.error(err);
+        showFeedbackModal('Gagal', 'Terjadi kesalahan saat mengirim laporan.');
+      }
     }
 
-    function deleteRecordPemantauan(id) {
-      showFeedbackModal('Konfirmasi Hapus', 'Hapus laporan pemantauan ini?', true, () => {
-        state.recordsPemantauan = state.recordsPemantauan.filter(r => r.id !== id);
-        saveState();
-        renderModulPemantauan(document.getElementById('main-content'));
+    window.deleteRecordPemantauan = function(id) {
+      showFeedbackModal('Konfirmasi Hapus', 'Hapus laporan pemantauan ini?', true, async () => {
+        if (!user) return;
+        try {
+          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records_pemantauan', id));
+        } catch (err) {
+          console.error(err);
+        }
       });
     }
 
-    function clearPemantauanPhoto() {
+    window.clearPemantauanPhoto = function() {
       tempEvidencePemantauan = '';
       const box = document.getElementById('pmn-preview-box');
       if (box) box.classList.add('hidden');
@@ -2834,7 +2874,7 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       11. MODUL 5: RAPORT TERPADU
+       12. MODUL 5: RAPORT TERPADU
        ========================================================================= */
     function getCombinedRaportData() {
       const map = {};
@@ -3111,20 +3151,20 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       12. STUDENT DATABASE MODAL LOGIC
+       13. STUDENT DATABASE MODAL LOGIC & FIREBASE EDITS
        ========================================================================= */
-    function openStudentModal() {
+    window.openStudentModal = function() {
       document.getElementById('modal-student').classList.remove('hidden');
       document.getElementById('modal-student').classList.add('flex');
       renderStudentTableModal();
     }
 
-    function closeStudentModal() {
+    window.closeStudentModal = function() {
       document.getElementById('modal-student').classList.add('hidden');
       document.getElementById('modal-student').classList.remove('flex');
     }
 
-    function renderStudentTableModal() {
+    window.renderStudentTableModal = function() {
       const search = (document.getElementById('search-student-modal')?.value || '').toLowerCase();
       const filtered = state.students.filter(s => s.name.toLowerCase().includes(search) || s.nim.includes(search));
       const tbody = document.getElementById('tbody-student-modal');
@@ -3162,7 +3202,7 @@ break-inside: avoid !important;
       lucide.createIcons();
     }
 
-    function openEditStudentModal(nim) {
+    window.openEditStudentModal = function(nim) {
       if (state.isLocked) {
         showFeedbackModal('Akses Dibatasi', 'Sistem dalam mode "Hanya Lihat". Buka kunci admin di header terlebih dahulu.');
         return;
@@ -3182,18 +3222,19 @@ break-inside: avoid !important;
       lucide.createIcons();
     }
 
-    function closeEditStudentModal() {
+    window.closeEditStudentModal = function() {
       const modal = document.getElementById('modal-edit-student');
       modal.classList.add('hidden');
       modal.classList.remove('flex');
     }
 
-    function handleSaveEditStudent(e) {
+    window.handleSaveEditStudent = async function(e) {
       e.preventDefault();
       if (state.isLocked) {
         showFeedbackModal('Akses Dibatasi', 'Buka kunci admin di header terlebih dahulu.');
         return;
       }
+      if (!user) { showFeedbackModal('Koneksi Error', 'Menunggu koneksi Firebase. Harap tunggu.'); return; }
 
       const oldNim = document.getElementById('edit-student-old-nim').value.trim();
       const newNim = document.getElementById('edit-student-nim').value.trim();
@@ -3210,44 +3251,42 @@ break-inside: avoid !important;
       }
 
       const st = state.students.find(s => s.nim === oldNim);
-      if (st) {
-        st.nim = newNim;
-        st.name = newName;
-      }
-
-      // Sinkronisasi otomatis ke rekapan Adrenalin & Pemantauan
-      state.recordsAdrenalin.forEach(r => {
-        if (r.nim === oldNim) {
-          r.nim = newNim;
-          r.name = newName;
+      try {
+        if (st) {
+          if (st.id && st.id.startsWith('init-')) {
+             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'students'), { nim: oldNim, _deleted: true });
+             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'students'), { nim: newNim, name: newName });
+          } else if (st.id) {
+             await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', st.id), { nim: newNim, name: newName });
+          }
         }
-      });
 
-      state.recordsPemantauan.forEach(r => {
-        if (r.nim === oldNim) {
-          r.nim = newNim;
-          r.name = newName;
+        // Memperbarui history pada Adrenalin dan Pemantauan secara massal
+        state.recordsAdrenalin.forEach(r => {
+          if (r.nim === oldNim) updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', r.id), { nim: newNim, name: newName });
+        });
+
+        state.recordsPemantauan.forEach(r => {
+          if (r.nim === oldNim) updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records_pemantauan', r.id), { nim: newNim, name: newName });
+        });
+
+        if (state.selectedRaportNim === oldNim) {
+          state.selectedRaportNim = newNim;
         }
-      });
 
-      if (state.selectedRaportNim === oldNim) {
-        state.selectedRaportNim = newNim;
+        closeEditStudentModal();
+        showFeedbackModal('Perubahan Disimpan', `Data mahasiswa ${newName} (${newNim}) berhasil diperbarui dan disinkronkan ke Cloud.`);
+      } catch (err) {
+        console.error(err);
+        showFeedbackModal('Gagal', 'Terjadi kesalahan saat menyinkronkan perubahan ke Cloud.');
       }
-
-      state.students.sort((a, b) => a.name.localeCompare(b.name));
-      saveState();
-      closeEditStudentModal();
-      renderStudentTableModal();
-      renderCurrentModule();
-      showFeedbackModal('Perubahan Disimpan', `Data mahasiswa ${newName} (${newNim}) berhasil diperbarui dan disinkronkan ke seluruh modul.`);
     }
 
-    function handleAddStudentManual(e) {
+    window.handleAddStudentManual = async function(e) {
       e.preventDefault();
-      if (state.isLocked) {
-        showFeedbackModal('Akses Dibatasi', 'Buka kunci admin di header terlebih dahulu.');
-        return;
-      }
+      if (state.isLocked) { showFeedbackModal('Akses Dibatasi', 'Buka kunci admin di header terlebih dahulu.'); return; }
+      if (!user) return;
+
       const nim = document.getElementById('input-manual-nim').value.trim();
       const name = document.getElementById('input-manual-name').value.trim().toUpperCase();
 
@@ -3256,20 +3295,20 @@ break-inside: avoid !important;
         return;
       }
 
-      state.students.push({ nim, name });
-      state.students.sort((a, b) => a.name.localeCompare(b.name));
-      saveState();
-      document.getElementById('input-manual-nim').value = '';
-      document.getElementById('input-manual-name').value = '';
-      renderStudentTableModal();
-      showFeedbackModal('Berhasil', 'Peserta baru berhasil ditambahkan.');
+      try {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'students'), { nim, name });
+        document.getElementById('input-manual-nim').value = '';
+        document.getElementById('input-manual-name').value = '';
+        showFeedbackModal('Berhasil', 'Peserta baru berhasil ditambahkan ke Cloud Firestore.');
+      } catch (err) {
+        console.error(err);
+      }
     }
 
-    function handleBulkAddStudents() {
-      if (state.isLocked) {
-        showFeedbackModal('Akses Dibatasi', 'Sistem dalam mode "Hanya Lihat". Buka kunci admin terlebih dahulu.');
-        return;
-      }
+    window.handleBulkAddStudents = async function() {
+      if (state.isLocked) { showFeedbackModal('Akses Dibatasi', 'Buka kunci admin terlebih dahulu.'); return; }
+      if (!user) return;
+      
       const text = document.getElementById('textarea-bulk-students').value.trim();
       if (!text) return;
 
@@ -3300,37 +3339,41 @@ break-inside: avoid !important;
       }
 
       if (toAdd.length === 0) {
-        showFeedbackModal('Peringatan', 'Tidak ada data valid/baru ditemukan. Pastikan ada deretan NIM 8-15 digit.');
+        showFeedbackModal('Peringatan', 'Tidak ada data valid/baru ditemukan.');
         return;
       }
 
-      state.students.push(...toAdd);
-      state.students.sort((a, b) => a.name.localeCompare(b.name));
-      saveState();
-      document.getElementById('textarea-bulk-students').value = '';
-      renderStudentTableModal();
-      showFeedbackModal('Sukses Massal', `${toAdd.length} data peserta berhasil disinkronkan ke database.`);
+      try {
+        const batchPromises = toAdd.map(s => addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'students'), s));
+        await Promise.all(batchPromises);
+        document.getElementById('textarea-bulk-students').value = '';
+        showFeedbackModal('Sukses Massal', `${toAdd.length} data peserta berhasil disinkronkan ke Cloud.`);
+      } catch (err) {
+        console.error(err);
+        showFeedbackModal('Gagal', 'Terjadi kesalahan saat menyinkronkan ke Cloud.');
+      }
     }
 
-    function deleteStudentShared(nim) {
-      if (state.isLocked) {
-        showFeedbackModal('Akses Dibatasi', 'Buka kunci admin di header terlebih dahulu untuk menghapus peserta.');
-        return;
-      }
+    window.deleteStudentShared = function(nim) {
+      if (state.isLocked) { showFeedbackModal('Akses Dibatasi', 'Buka kunci admin di header terlebih dahulu.'); return; }
       const st = state.students.find(s => s.nim === nim);
       const name = st ? st.name : nim;
-      showFeedbackModal('Hapus Peserta', `Hapus peserta ${name} (${nim}) dari database sentral?`, true, () => {
-        state.students = state.students.filter(s => s.nim !== nim);
-        saveState();
-        renderStudentTableModal();
-        renderCurrentModule();
+      showFeedbackModal('Hapus Peserta', `Hapus peserta ${name} (${nim}) dari database sentral?`, true, async () => {
+        if (!user) return;
+        try {
+          if (st && st.id && st.id.startsWith('init-')) {
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'students'), { nim: nim, _deleted: true });
+          } else if (st && st.id) {
+            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', st.id));
+          }
+        } catch(e) { console.error(e); }
       });
     }
 
     /* =========================================================================
-       13. BACKUP, RESTORE & EXPORT (PDF & PNG)
+       14. EXPORT & RESTORE MASTER JSON (CLOUD SYNC MODE)
        ========================================================================= */
-    function compressImageInput(e, previewImgId, statusId, callback, onStart) {
+    window.compressImageInput = function(e, previewImgId, statusId, callback, onStart) {
       const file = e.target.files[0];
       if (!file) return;
 
@@ -3368,7 +3411,6 @@ break-inside: avoid !important;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
           
-          // Kompresi JPEG 0.55 ringan (15-25 KB) aman di LocalStorage
           const b64 = canvas.toDataURL('image/jpeg', 0.55);
 
           if (preview) {
@@ -3392,7 +3434,7 @@ break-inside: avoid !important;
       reader.readAsDataURL(file);
     }
 
-    function openEvidenceModal(recordId, type) {
+    window.openEvidenceModal = function(recordId, type) {
       let rec = null;
       if (type === 'adrenalin') {
         rec = state.recordsAdrenalin.find(r => r.id === recordId);
@@ -3424,7 +3466,7 @@ break-inside: avoid !important;
       lucide.createIcons();
     }
 
-    function closeEvidenceModal() {
+    window.closeEvidenceModal = function() {
       const modal = document.getElementById('modal-evidence');
       if (modal) {
         modal.classList.add('hidden');
@@ -3434,14 +3476,14 @@ break-inside: avoid !important;
       }
     }
 
-    function handleExportMasterJSON() {
+    window.handleExportMasterJSON = function() {
       if (state.isLocked) {
-        showFeedbackModal('Akses Dibatasi', 'Buka kunci admin terlebih dahulu untuk mengekspor database.');
+        showFeedbackModal('Akses Dibatasi', 'Buka kunci admin terlebih dahulu untuk mengekspor database Cloud.');
         return;
       }
 
       const master = {
-        version: '3.0-html-standalone',
+        version: '3.0-html-cloud-sync',
         exportedAt: new Date().toISOString(),
         students: state.students,
         adrenalin: {
@@ -3465,34 +3507,47 @@ break-inside: avoid !important;
       URL.revokeObjectURL(url);
     }
 
-    function handleImportMasterJSON(e) {
+    window.handleImportMasterJSON = function(e) {
       if (state.isLocked) {
         showFeedbackModal('Akses Dibatasi', 'Sistem terkunci! Buka kunci admin terlebih dahulu untuk memulihkan database.');
         e.target.value = '';
         return;
       }
+      if (!user) { showFeedbackModal('Koneksi Error', 'Harap tunggu hingga terhubung ke Firebase.'); return; }
 
       const file = e.target.files[0];
       if (!file) return;
 
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         try {
           const data = JSON.parse(event.target.result);
-          if (data.students) state.students = data.students;
-          if (data.adrenalin) {
-            state.recordsAdrenalin = data.adrenalin.records || [];
-            state.customRulesAdrenalin = data.adrenalin.custom_rules || [];
+          showFeedbackModal('Memulihkan...', 'Sedang mengunggah data ke Cloud Firestore secara massal, mohon tunggu...');
+          
+          if (data.students) {
+            const sRef = collection(db, 'artifacts', appId, 'public', 'data', 'students');
+            await Promise.all(data.students.map(s => addDoc(sRef, s)));
           }
-          if (data.pemantauan) {
-            state.recordsPemantauan = data.pemantauan.records || [];
-            state.customRulesPemantauan = data.pemantauan.custom_rules || [];
+          if (data.adrenalin && data.adrenalin.records) {
+            const rRef = collection(db, 'artifacts', appId, 'public', 'data', 'records');
+            await Promise.all(data.adrenalin.records.map(r => addDoc(rRef, r)));
           }
-          saveState();
-          showFeedbackModal('Pulih Berhasil', 'Database berhasil dipulihkan secara menyeluruh.');
-          renderCurrentModule();
+          if (data.adrenalin && data.adrenalin.custom_rules) {
+            const cRef = collection(db, 'artifacts', appId, 'public', 'data', 'custom_rules');
+            await Promise.all(data.adrenalin.custom_rules.map(r => addDoc(cRef, r)));
+          }
+          if (data.pemantauan && data.pemantauan.records) {
+            const rpRef = collection(db, 'artifacts', appId, 'public', 'data', 'records_pemantauan');
+            await Promise.all(data.pemantauan.records.map(r => addDoc(rpRef, r)));
+          }
+          if (data.pemantauan && data.pemantauan.custom_rules) {
+            const cpRef = collection(db, 'artifacts', appId, 'public', 'data', 'custom_rules_pemantauan');
+            await Promise.all(data.pemantauan.custom_rules.map(r => addDoc(cpRef, r)));
+          }
+          
+          showFeedbackModal('Pulih Berhasil', 'Seluruh database berhasil dipulihkan dan disinkronkan ke Cloud Server secara menyeluruh.');
         } catch (err) {
-          showFeedbackModal('Gagal', 'File JSON tidak valid.');
+          showFeedbackModal('Gagal', 'File JSON tidak valid atau koneksi terputus.');
         }
       };
       reader.readAsText(file);
@@ -3500,9 +3555,9 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       13. BACKUP, RESTORE & EXPORT (ANTI-POTONG HIGH RESOLUTION)
+       15. UNDUH PDF OFFICIAL 
        ========================================================================= */
-    function showToast(message) {
+    window.showToast = function(message) {
       const toast = document.getElementById('toast-notif');
       const msg = document.getElementById('toast-message');
       if (toast && msg) {
@@ -3512,7 +3567,7 @@ break-inside: avoid !important;
       }
     }
 
-    function downloadPDFPortrait(elementId, filename) {
+    window.downloadPDFPortrait = function(elementId, filename) {
       if (state.isLocked) {
         showFeedbackModal('Akses Dibatasi', 'Laporan resmi PDF hanya dapat diunduh oleh Admin. Silakan buka kunci di header.');
         return;
@@ -3524,7 +3579,7 @@ break-inside: avoid !important;
       showToast('Memproses laporan PDF resmi (A4 Portrait)...');
 
       const opt = {
-        margin: [10, 10, 10, 10], // Margin proporsional merata 10mm
+        margin: [10, 10, 10, 10],
         filename: filename || `Laporan_Kedisiplinan_${Date.now()}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { 
@@ -3584,7 +3639,7 @@ break-inside: avoid !important;
       });
     }
 
-    function downloadRaportPDF(elementId, filename) {
+    window.downloadRaportPDF = function(elementId, filename) {
       if (state.isLocked) {
         showFeedbackModal('Akses Dibatasi', 'Unduh berkas Raport PDF dikunci untuk admin. Silakan buka kunci admin di header.');
         return;
@@ -3652,14 +3707,44 @@ break-inside: avoid !important;
     }
 
     /* =========================================================================
-       14. BOOTSTRAP APPLIKASI
+       16. BINDING GLOBAL & BOOTSTRAP APPLIKASI
        ========================================================================= */
+    // Mengekspos seluruh fungsi yang diperlukan oleh event HTML (onclick, dsb.) ke objek window
+    window.dismissSplash = dismissSplash;
+    window.replaySplash = replaySplash;
+    window.handleToggleLock = handleToggleLock;
+    window.closePinModal = closePinModal;
+    window.handleVerifyPin = handleVerifyPin;
+    window.updateLockUI = updateLockUI;
+    window.showFeedbackModal = showFeedbackModal;
+    window.closeFeedbackModal = closeFeedbackModal;
+    window.executeFeedbackConfirm = executeFeedbackConfirm;
+    window.renderNavTabs = renderNavTabs;
+    window.switchModule = switchModule;
+    window.renderCurrentModule = renderCurrentModule;
+    window.renderModulTatibPeserta = renderModulTatibPeserta;
+    window.setPesertaSubTab = setPesertaSubTab;
+    window.toggleAccordion = toggleAccordion;
+    window.renderModulTatibPanitia = renderModulTatibPanitia;
+    window.getRecapSummaryAdrenalin = getRecapSummaryAdrenalin;
+    window.renderModulRekapAdrenalin = renderModulRekapAdrenalin;
+    window.filterKlasemenAdrenalin = filterKlasemenAdrenalin;
+    window.getRecapSummaryPemantauan = getRecapSummaryPemantauan;
+    window.renderModulPemantauan = renderModulPemantauan;
+    window.filterKlasemenPemantauan = filterKlasemenPemantauan;
+    window.getCombinedRaportData = getCombinedRaportData;
+    window.renderModulRaportTerpadu = renderModulRaportTerpadu;
+
     window.addEventListener('DOMContentLoaded', () => {
       initSplashScreen();
       renderNavTabs();
-      renderCurrentModule();
+      
+      // PERBAIKAN: Menjalankan render langsung agar modul Tatib Peserta langsung muncul tanpa menunggu Firebase
+      renderCurrentModule(); 
+      
       updateHeaderCounts();
       updateLockUI();
+      initFirebase();
     });
   </script>
 </body>
